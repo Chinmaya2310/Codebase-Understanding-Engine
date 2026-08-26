@@ -20,6 +20,9 @@ import re
 _PYTHON_SOURCES: list[tuple[re.Pattern, str]] = [
     # Flask / Django request object parameters (GET, POST, JSON body, form, …)
     (re.compile(r"request\.(args|form|values|json|GET|POST|data)"), "http_request_params"),
+    # aiohttp / Starlette style: await request.post() / request.json()
+    # (lowercase method call, distinct from Flask's request.POST attribute)
+    (re.compile(r"request\.(?:post|json|body|text)\s*\("), "aiohttp_request_post"),
     # Interactive stdin — trivially attacker-controlled in server contexts
     (re.compile(r"\binput\s*\("), "stdin_input"),
     # Command-line arguments — controlled by the process invoker
@@ -57,6 +60,21 @@ _PYTHON_SINKS: list[tuple[re.Pattern, str, str]] = [
     (
         re.compile(r"\.execute\s*\(\s*[\"\']*.*%s|\.execute\s*\(\s*f['\"]"),
         "sql_execute",
+        "SQL Injection",
+    ),
+    # SQL Injection — Python % string-formatting operator applied to a SQL string.
+    # Pattern: closing quote followed by `% {dict}` or `% (tuple)` or `% var`.
+    # Detects e.g. `"INSERT INTO t VALUES ('%s')" % user_input`.
+    # Uses re.DOTALL so the SQL keyword and the `%` operator can span multiple lines
+    # in a parenthesised multi-line string expression.
+    # NOTE: the pattern requires a SQL keyword to reduce false positives;
+    # pure Python string formatting unrelated to SQL will not match.
+    (
+        re.compile(
+            r"(INSERT|SELECT|UPDATE|DELETE).*['\"]\s*%\s*[\w\{\(\[]",
+            re.DOTALL,
+        ),
+        "sql_percent_format",
         "SQL Injection",
     ),
 
