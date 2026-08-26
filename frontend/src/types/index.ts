@@ -39,3 +39,16 @@ export interface DeadCodeFinding {
 
 export interface QASource { file_path: string; qualified_name: string; element_type: string; }
 export interface QAResponse { answer: string; sources: QASource[]; }
+
+export interface TaintFinding {
+  finding_type: "direct" | "interprocedural";
+  source_qn: string;
+  source_file: string | null;
+  source_line: number | null;
+  sink_qn: string;
+  sink_file: string | null;
+  sink_line: number | null;
+  path: string[];
+  vuln_class: string;
+  confidence: "high" | "medium" | "low";
+}

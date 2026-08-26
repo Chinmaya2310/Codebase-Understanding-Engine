@@ -1,21 +1,23 @@
 import { useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { ArrowLeft, GitBranch, Network, Layers, ShieldOff, FolderOpen, MessageSquare, RotateCcw, Loader2, AlertCircle, CheckCircle, Clock, FileCode2, Zap } from "lucide-react";
+import { ArrowLeft, GitBranch, Network, Layers, ShieldOff, ShieldAlert, FolderOpen, MessageSquare, RotateCcw, Loader2, AlertCircle, CheckCircle, Clock, FileCode2, Zap } from "lucide-react";
 import { useRepositoryPolling } from "../hooks/useRepository";
 import { api } from "../services/api";
 import { CodeGraph } from "../components/CodeGraph";
 import { ArchitectureDiagram } from "../components/ArchitectureDiagram";
 import { DeadCodePanel } from "../components/DeadCodePanel";
+import { SecurityFindingsPanel } from "../components/SecurityFindingsPanel";
 import { FileExplorer } from "../components/FileExplorer";
 import { QuestionAnswer } from "../components/QuestionAnswer";
 import type { Repository } from "../types";
 
-type Tab = "graph"|"architecture"|"deadcode"|"elements"|"qa";
+type Tab = "graph"|"architecture"|"deadcode"|"security"|"elements"|"qa";
 
 const TABS: { id: Tab; label: string; icon: typeof Network; desc: string }[] = [
   { id: "graph",        label: "Code Graph",    icon: Network,       desc: "Interactive relationship graph" },
   { id: "architecture", label: "Architecture",  icon: Layers,        desc: "Patterns & diagrams" },
   { id: "deadcode",     label: "Dead Code",      icon: ShieldOff,     desc: "Unreferenced elements" },
+  { id: "security",     label: "Security",       icon: ShieldAlert,   desc: "Taint-flow vulnerabilities" },
   { id: "elements",     label: "Elements",       icon: FolderOpen,    desc: "Browse all code" },
   { id: "qa",           label: "Ask AI",         icon: MessageSquare, desc: "Natural language Q&A" },
 ];
@@ -207,6 +209,7 @@ export function RepositoryView() {
               {activeTab === "graph"        && <CodeGraph repositoryId={id} />}
               {activeTab === "architecture" && <ArchitectureDiagram repositoryId={id} />}
               {activeTab === "deadcode"     && <DeadCodePanel repositoryId={id} />}
+              {activeTab === "security"     && <SecurityFindingsPanel repositoryId={id} />}
               {activeTab === "elements"     && <FileExplorer repositoryId={id} />}
               {activeTab === "qa"           && <QuestionAnswer repositoryId={id} />}
             </main>

@@ -1,5 +1,5 @@
 import axios from "axios";
-import type { ArchitectureResult, CodeElement, DeadCodeFinding, DiagramResult, QAResponse, Repository } from "../types";
+import type { ArchitectureResult, CodeElement, DeadCodeFinding, DiagramResult, QAResponse, Repository, TaintFinding } from "../types";
 
 const http = axios.create({ baseURL: "/api" });
 
@@ -17,4 +17,11 @@ export const api = {
     http.get(`/repositories/${id}/elements`, { params }).then(r => r.data),
   askQuestion: (id: string, question: string, top_k = 8): Promise<QAResponse> =>
     http.post(`/repositories/${id}/ask`, { question, top_k }).then(r => r.data),
+  getTaintAnalysis: (id: string): Promise<{ findings: TaintFinding[] }> =>
+    http.get(`/repositories/${id}/taint-analysis`).then(r => r.data),
+  explainTaintFinding: (
+    id: string,
+    finding: Pick<TaintFinding, "source_qn" | "sink_qn" | "vuln_class" | "confidence" | "path">
+  ): Promise<{ explanation: string }> =>
+    http.post(`/repositories/${id}/taint-analysis/explain`, finding).then(r => r.data),
 };
