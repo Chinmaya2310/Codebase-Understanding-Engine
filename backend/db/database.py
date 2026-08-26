@@ -47,3 +47,12 @@ async def init_db() -> None:
         from sqlalchemy import text
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         await conn.run_sync(Base.metadata.create_all)
+        # Add new enum values to the existing PostgreSQL type without dropping it.
+        # This is idempotent: the DO block swallows the duplicate_object error if
+        # the value already exists (PostgreSQL < 12 lacks IF NOT EXISTS on ADD VALUE).
+        await conn.execute(text(
+            "DO $$ BEGIN "
+            "  ALTER TYPE analysistype ADD VALUE 'taint_analysis'; "
+            "EXCEPTION WHEN duplicate_object THEN NULL; "
+            "END $$;"
+        ))
