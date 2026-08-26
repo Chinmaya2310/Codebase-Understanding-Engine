@@ -150,7 +150,7 @@ function FindingCard({
             {f.sink_file && (
               <div>
                 <p style={{ fontSize: 10, color: "var(--text3)", fontWeight: 600, marginBottom: 2 }}>SINK</p>
-                <p style={{ fontSize: 11, fontFamily: "monospace" }} style={{ color: vc.fg, fontSize: 11, fontFamily: "monospace" }}>
+                <p style={{ fontSize: 11, fontFamily: "monospace", color: vc.fg }}>
                   {f.sink_file.split(/[/\\]/).slice(-3).join("/")}:{f.sink_line}
                 </p>
               </div>
