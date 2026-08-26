@@ -4,10 +4,18 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from backend.api.schemas import ArchitectureResponse, CodeElementResponse, DeadCodeResponse
+from backend.api.schemas import (
+    ArchitectureResponse,
+    CodeElementResponse,
+    DeadCodeResponse,
+    TaintAnalysisResponse,
+    TaintExplainRequest,
+    TaintExplainResponse,
+)
 from backend.db.database import get_db
 from backend.models.analysis import AnalysisResult, AnalysisType
 from backend.models.code_element import CodeElement
+from backend.services.question_answering_service import QuestionAnsweringService
 
 router = APIRouter(prefix="/api/repositories/{repository_id}", tags=["analysis"])
 
@@ -34,6 +42,42 @@ async def get_dead_code(repository_id: uuid.UUID, db: AsyncSession = Depends(get
     if not a:
         raise HTTPException(status_code=404, detail="Dead code analysis not yet available")
     return a.result
+
+
+@router.get("/taint-analysis", response_model=TaintAnalysisResponse)
+async def get_taint_analysis(
+    repository_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+):
+    a = await _get_analysis(db, repository_id, AnalysisType.TAINT_ANALYSIS)
+    if not a:
+        raise HTTPException(status_code=404, detail="Taint analysis not yet available")
+    return a.result
+
+
+@router.post("/taint-analysis/explain", response_model=TaintExplainResponse)
+async def explain_taint_finding(
+    repository_id: uuid.UUID,
+    request: TaintExplainRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Generate a plain-English LLM explanation for a single taint finding.
+    Called on demand (Explain button) — never pre-generated for all findings.
+    """
+    svc = QuestionAnsweringService()
+    try:
+        explanation = await svc.explain_taint_finding(
+            db=db,
+            repository_id=repository_id,
+            source_qn=request.source_qn,
+            sink_qn=request.sink_qn,
+            vuln_class=request.vuln_class,
+            confidence=request.confidence,
+            path=request.path,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    return {"explanation": explanation}
 
 
 @router.get("/elements", response_model=list[CodeElementResponse])
