@@ -9,6 +9,7 @@ from backend.db.database import Base
 class AnalysisType(str, enum.Enum):
     ARCHITECTURE = "architecture"; DEPENDENCIES = "dependencies"
     DEAD_CODE = "dead_code"; QA = "qa"; DIAGRAM = "diagram"
+    TAINT_ANALYSIS = "taint_analysis"
 
 
 class AnalysisResult(Base):

@@ -18,6 +18,7 @@ from backend.models.analysis import AnalysisResult, AnalysisType
 from backend.models.code_element import CodeElement, CodeElementType
 from backend.models.repository import Repository, RepositoryStatus
 from backend.services.dead_code_service import DeadCodeService
+from backend.services.taint_analysis_service import TaintAnalysisService
 from backend.services.diagram_service import DiagramService
 from backend.services.embedding_service import EmbeddingService
 from backend.services.graph_service import GraphService
@@ -222,6 +223,27 @@ async def run_analysis_pipeline(repository_id: uuid.UUID) -> None:
                 analysis_type=AnalysisType.DEAD_CODE,
                 result={"findings": dead},
             ))
+
+            # ── 7. Taint-flow analysis ────────────────────────────────
+            # Wrapped independently so a failure here never fails the pipeline.
+            try:
+                taint_svc = TaintAnalysisService()
+                taint_findings = taint_svc.run(graph, language="python")
+                db.add(AnalysisResult(
+                    repository_id=repo.id,
+                    analysis_type=AnalysisType.TAINT_ANALYSIS,
+                    result={"findings": taint_findings},
+                ))
+                await db.commit()
+                logger.info(
+                    "Taint analysis complete: %d findings for repo %s",
+                    len(taint_findings), repository_id,
+                )
+            except Exception as taint_exc:
+                logger.exception(
+                    "Taint analysis failed for repo %s (pipeline continues): %s",
+                    repository_id, taint_exc,
+                )
 
             await _set_status(db, repo, RepositoryStatus.READY, 1.0)
             logger.info("Pipeline complete for repo %s", repository_id)
