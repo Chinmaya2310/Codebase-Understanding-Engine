@@ -5,4 +5,9 @@
 .env.test.local
 # ignore  node_modules
 node_modules/
-.
+__pycache__/
+*.pyc
+*.pyo
+tests/__pycache__/
+frontend/dist/
+frontend/package-lock.json

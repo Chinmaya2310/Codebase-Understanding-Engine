@@ -50,9 +50,13 @@ async def init_db() -> None:
         # Add new enum values to the existing PostgreSQL type without dropping it.
         # This is idempotent: the DO block swallows the duplicate_object error if
         # the value already exists (PostgreSQL < 12 lacks IF NOT EXISTS on ADD VALUE).
+        # SQLAlchemy stores Python enum NAMES (uppercase) as PostgreSQL enum labels.
+        # 'TAINT_ANALYSIS' must match what create_all and the ORM binding both use.
+        # The DO block is idempotent: duplicate_object swallows it on fresh DBs where
+        # create_all already added 'TAINT_ANALYSIS'.
         await conn.execute(text(
             "DO $$ BEGIN "
-            "  ALTER TYPE analysistype ADD VALUE 'taint_analysis'; "
+            "  ALTER TYPE analysistype ADD VALUE 'TAINT_ANALYSIS'; "
             "EXCEPTION WHEN duplicate_object THEN NULL; "
             "END $$;"
         ))

@@ -699,6 +699,74 @@ updated_at            docstring                  edge_type (enum)
 
 ---
 
+## 🔐 Taint-Flow Security Analysis
+
+CUE includes a **call-graph-level taint analysis** engine that traces paths from untrusted input sources to dangerous sinks, surfaced in the **Security** tab.
+
+### How it works
+
+1. After the call graph is built, the pipeline runs `TaintAnalysisService.run()`.
+2. It regex-matches every function's source code against a list of **source patterns** (HTTP request params, `input()`, `sys.argv`, env vars, cookies) and **sink patterns** (eval/exec, `os.system`, `subprocess` with `shell=True`, raw SQL via `%`-formatting or f-strings, `pickle.loads`, `yaml.load`, Jinja2 `render_template_string`).
+3. BFS over CALLS edges from each source function, up to 6 hops deep, finds reachable sinks.
+4. Confidence: **high** if source calls sink directly (≤1 hop), **medium** for 2–3 hops, **low** for 4–6 hops.
+5. Deduplication keeps the highest-confidence path per `(source, sink)` pair.
+
+### Verified finding — DVPWA SQLi
+
+**Target:** [dvpwa](https://github.com/anxolerd/dvpwa) — intentionally vulnerable Python/aiohttp web app.
+
+**Finding:** `views.students` → `student.Student.create` — SQL Injection (high confidence)
+
+```
+Source: sqli/views.py:52  (views.students)
+  data = await request.post()        ← aiohttp taint source
+  await Student.create(conn, data['name'])
+
+Sink:   sqli/dao/student.py:41  (student.Student.create)
+  q = "INSERT INTO student(name) VALUES ('%s')" % name   ← sql_percent_format
+  await conn.execute(q)              ← unparameterized SQL
+```
+
+This is the documented CVE-class vulnerability in DVPWA: a POST to `/students` with a crafted `name` value achieves SQL injection because the INSERT query is built via Python `%` string formatting before being passed to `execute()`.
+
+The full API run against DVPWA returns **8 findings** (all SQL Injection, all high confidence), covering `Student.create`, `Student.get`, and `Course.create` sink functions reachable from every HTTP handler.
+
+### Limitations
+
+| Limitation | Details |
+|---|---|
+| **Python-only** | JS/Java/Go patterns not yet implemented — additive to add (new key in `SOURCES`/`SINKS` dicts) |
+| **Call-graph level** | Does NOT track data flow through variables — a tainted value may not actually reach the sink at runtime |
+| **Regex-based** | Source/sink detection uses regex on raw source code, not an AST — false positives possible |
+| **SQL injection heuristic** | `sql_percent_format` pattern requires a SQL keyword in the same expression — may miss cross-function composition |
+| **No sanitiser modelling** | If tainted data passes through a sanitiser/validator between source and sink, the finding is still reported |
+
+### API endpoints
+
+```
+GET  /api/repositories/{id}/taint-analysis
+     → { findings: [{ source_qn, sink_qn, vuln_class, confidence, path, ... }] }
+
+POST /api/repositories/{id}/taint-analysis/explain
+     Body: { source_qn, sink_qn, vuln_class, confidence, path }
+     → { explanation: "..." }   (GPT-4o-mini if OPENAI_API_KEY set; distilgpt2 fallback)
+```
+
+### Running taint analysis
+
+Analysis runs automatically as pipeline step 7 after ingestion. To re-trigger:
+
+```bash
+# Re-ingest repository (analysis runs on every ingestion)
+curl -X POST http://localhost:8080/api/repositories \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://github.com/anxolerd/dvpwa"}'
+```
+
+The **Security** tab in the UI shows all findings with confidence filters, vulnerability class breakdown, call-path visualisation, and an on-demand AI explanation button.
+
+---
+
 ## ⚠️ Known Limitations
 
 | Limitation | Details |
@@ -708,6 +776,7 @@ updated_at            docstring                  edge_type (enum)
 | **Repo size limit** | Default 500 MB — configurable via `MAX_REPO_SIZE_MB` |
 | **Render free tier sleeps** | 30-60s cold start after 15 min idle — use UptimeRobot to keep awake |
 | **Rust/C not yet supported** | Parsers not yet implemented |
+| **Taint analysis is call-graph level** | Not data-flow sensitive — false positives expected (see Security Analysis section above) |
 
 ---
 
