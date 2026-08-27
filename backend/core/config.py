@@ -42,6 +42,8 @@ class Settings(BaseSettings):
     # LLM
     openai_api_key: Optional[str] = None
     openai_model: str = "gpt-4o-mini"
+    groq_api_key: Optional[str] = None
+    groq_model: str = "qwen/qwen3.8-27b"
     local_llm_model_path: Optional[str] = None
 
     # Embeddings

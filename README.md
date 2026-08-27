@@ -749,8 +749,16 @@ GET  /api/repositories/{id}/taint-analysis
 
 POST /api/repositories/{id}/taint-analysis/explain
      Body: { source_qn, sink_qn, vuln_class, confidence, path }
-     → { explanation: "..." }   (GPT-4o-mini if OPENAI_API_KEY set; distilgpt2 fallback)
+     → { explanation: "..." }   (OpenAI GPT-4o-mini if OPENAI_API_KEY set; Groq qwen3.8-27b if GROQ_API_KEY set; distilgpt2 local fallback)
 ```
+
+The LLM explanation backend uses **Groq (qwen/qwen3.8-27b)** by default via `GROQ_API_KEY` — free tier, no card required. Set `OPENAI_API_KEY` instead to override with GPT-4o-mini.
+
+### Security tab screenshot
+
+![Security tab showing 8 SQL Injection findings for DVPWA with AI explanation expanded](docs/security-tab-screenshot.png)
+
+*8 findings for DVPWA — `views.students → Student.create` expanded with Groq-powered AI Security Analysis.*
 
 ### Running taint analysis
 
@@ -788,7 +796,8 @@ The **Security** tab in the UI shows all findings with confidence filters, vulne
 | `DATABASE_URL_SYNC` | ✅ | — | PostgreSQL sync connection string |
 | `REDIS_URL` | ✅ | — | Redis connection string |
 | `SECRET_KEY` | ✅ | — | JWT signing secret (32 random bytes) |
-| `OPENAI_API_KEY` | ❌ | — | Enables Ask AI tab (GPT-4o-mini) |
+| `OPENAI_API_KEY` | ❌ | — | Enables Ask AI + Explain via GPT-4o-mini |
+| `GROQ_API_KEY` | ❌ | — | Enables Ask AI + Explain via Groq (qwen3.8-27b, free tier) |
 | `CLONE_BASE_PATH` | ❌ | `/tmp/cue_repos` | Where repos are cloned |
 | `MAX_REPO_SIZE_MB` | ❌ | `500` | Max repository size in MB |
 | `EMBEDDING_MODEL_NAME` | ❌ | `sentence-transformers/all-MiniLM-L6-v2` | Embedding model |
