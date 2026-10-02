@@ -1,7 +1,6 @@
 # Codebase Understanding Engine — Full System Context
 
-Use this document with Claude.ai (paste into a Project as a knowledge source) to ask any question
-about how this system works, why decisions were made, or how to extend it.
+A single reference for how this system works, why decisions were made, and how to extend it.
 
 ---
 
