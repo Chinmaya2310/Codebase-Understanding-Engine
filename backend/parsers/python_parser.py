@@ -100,6 +100,12 @@ class PythonParser(BaseParser):
         return targets
 
     def _call_name(self, node: Node, source: bytes):
+        """
+        Return the callee as written, keeping the receiver so the graph can
+        resolve it: ``foo``, ``Course.create``, ``self.helper``, ``a.b.c``.
+        Receivers that are not a plain dotted name (``super().save()``,
+        ``x[0].run()``) are returned as ``?.<attr>`` — unknown receiver.
+        """
         fn = node.child_by_field_name("function")
         if not fn:
             return None
@@ -107,5 +113,21 @@ class PythonParser(BaseParser):
             return self._text(fn, source)
         if fn.type == "attribute":
             attr = fn.child_by_field_name("attribute")
-            return self._text(attr, source) if attr else None
+            if not attr:
+                return None
+            receiver = self._dotted_name(fn.child_by_field_name("object"), source)
+            return f"{receiver or '?'}.{self._text(attr, source)}"
+        return None
+
+    def _dotted_name(self, node: Optional[Node], source: bytes) -> Optional[str]:
+        """Text of an identifier / attribute chain (``a.b.c``), else None."""
+        if node is None:
+            return None
+        if node.type == "identifier":
+            return self._text(node, source)
+        if node.type == "attribute":
+            obj = self._dotted_name(node.child_by_field_name("object"), source)
+            attr = node.child_by_field_name("attribute")
+            if obj and attr:
+                return f"{obj}.{self._text(attr, source)}"
         return None
