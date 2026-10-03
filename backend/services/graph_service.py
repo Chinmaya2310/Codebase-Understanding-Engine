@@ -62,7 +62,7 @@ class GraphService:
                 if el.element_type == "call":
                     if el.parent_qualified_name:
                         pending_calls.append(
-                            (el.parent_qualified_name, el.target or el.name)
+                            (el.parent_qualified_name, el.target or el.name, el.language)
                         )
                     continue
 
@@ -101,10 +101,19 @@ class GraphService:
                         edge_type="contains",
                     )
 
-        # Resolve CALLS edges (name-based best-effort)
-        for caller, callee_name in pending_calls:
-            for tgt in name_to_qns.get(callee_name, []):
-                if tgt != caller and caller in graph and tgt in graph:
+        # Resolve CALLS edges. Python callees keep their receiver
+        # (``Course.create``) and are resolved precisely; other languages
+        # still emit bare names and use name-based best-effort matching.
+        py_index = _PythonCallIndex(graph)
+        for caller, callee, language in pending_calls:
+            if caller not in graph:
+                continue
+            if language == "python":
+                targets = py_index.resolve(caller, callee)
+            else:
+                targets = name_to_qns.get(callee.rsplit(".", 1)[-1], [])
+            for tgt in targets:
+                if tgt != caller and tgt in graph:
                     graph.add_edge(caller, tgt, edge_type="calls")
 
         # Resolve IMPORTS edges
@@ -253,3 +262,82 @@ class GraphService:
             if not in_edges:
                 candidates.append(qn)
         return candidates
+
+
+class _PythonCallIndex:
+    """
+    Resolves a Python call (as written at the call site) to graph nodes.
+
+    Resolution rules, in order:
+      ``f()``            nested function of the caller, else a top-level
+                         function/class named ``f`` — same module first.
+      ``self.m()``       method ``m`` of the caller's enclosing class.
+      ``Klass.m()``      method ``m`` of a class named ``Klass``.
+      ``module.f()``     function/class ``f`` defined in module ``module``.
+      anything else      unresolved (no edge). The receiver's type is unknown
+                         (``session.get``, ``cursor.execute``), and guessing by
+                         method name alone links unrelated functions.
+    """
+
+    _CALLABLE = ("function", "method", "class")
+
+    def __init__(self, graph: nx.MultiDiGraph) -> None:
+        self._graph = graph
+        self._top_level: dict[str, list[str]] = defaultdict(list)
+        self._classes: dict[str, list[str]] = defaultdict(list)
+        self._members: dict[str, dict[str, str]] = defaultdict(dict)
+        self._modules: set[str] = set()
+
+        for qn, data in graph.nodes(data=True):
+            ntype = data.get("node_type")
+            if ntype == "module":
+                self._modules.add(qn)
+            if ntype not in self._CALLABLE or "." not in qn:
+                continue
+            parent, name = qn.rsplit(".", 1)
+            self._members[parent][name] = qn
+            if self._type(parent) == "module":
+                self._top_level[name].append(qn)
+            if ntype == "class":
+                self._classes[name].append(qn)
+
+    def _type(self, qn: str) -> str | None:
+        return self._graph.nodes[qn].get("node_type") if qn in self._graph else None
+
+    def _enclosing_class(self, caller: str) -> str | None:
+        parts = caller.split(".")
+        for i in range(len(parts) - 1, 0, -1):
+            prefix = ".".join(parts[:i])
+            if self._type(prefix) == "class":
+                return prefix
+        return None
+
+    def resolve(self, caller: str, callee: str) -> list[str]:
+        if "." not in callee:
+            nested = self._members.get(caller, {}).get(callee)
+            if nested:
+                return [nested]
+            candidates = self._top_level.get(callee, [])
+            module = caller.split(".", 1)[0]
+            same_module = [c for c in candidates if c.split(".", 1)[0] == module]
+            return same_module or candidates
+
+        receiver, method = callee.rsplit(".", 1)
+        if receiver in ("self", "cls"):
+            klass = self._enclosing_class(caller)
+            hit = self._members.get(klass, {}).get(method) if klass else None
+            return [hit] if hit else []
+        if receiver == "?" or receiver.split(".", 1)[0] in ("self", "cls"):
+            return []
+
+        leaf = receiver.rsplit(".", 1)[-1]
+        if leaf in self._classes:
+            return [
+                self._members[k][method]
+                for k in self._classes[leaf]
+                if method in self._members.get(k, {})
+            ]
+        if leaf in self._modules:
+            hit = self._members.get(leaf, {}).get(method)
+            return [hit] if hit else []
+        return []

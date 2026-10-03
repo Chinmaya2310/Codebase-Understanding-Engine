@@ -7,11 +7,88 @@ reads via SOURCES[language] and SINKS[language], so existing code is
 untouched.
 
 Source pattern shape:  (compiled_regex, short_label)
-Sink pattern shape:    (compiled_regex, short_label, vulnerability_class)
+Sink pattern shape:    (matcher, short_label, vulnerability_class), where matcher
+                       is a compiled regex or any object with ``search(code)``.
 """
 from __future__ import annotations
 
+import ast
 import re
+import textwrap
+
+
+class _PythonSqlInjectionSink:
+    """
+    Sink matcher with the same ``search(code)`` interface as a compiled regex.
+
+    A regex cannot tell the ``%s`` placeholder of a parameterised query
+    (safe) from the ``%`` formatting operator (unsafe), so this parses the
+    function body and looks for a *dynamic* string — one built at runtime via
+    ``%``, an f-string with interpolation, ``.format()`` or ``+`` with a
+    non-literal operand — that is either passed straight to
+    ``execute``/``executemany``/``executescript``/``raw``, or contains SQL.
+    """
+
+    _EXEC_METHODS = {"execute", "executemany", "executescript", "raw"}
+    _SQL = re.compile(
+        r"\bselect\b.+\bfrom\b|\binsert\s+into\b|\bupdate\b.+\bset\b|\bdelete\s+from\b",
+        re.IGNORECASE | re.DOTALL,
+    )
+    # Used only when the snippet cannot be parsed as Python.
+    _FALLBACK = re.compile(
+        r"\.execute\s*\(\s*f['\"]"
+        r"|(INSERT|SELECT|UPDATE|DELETE)[^'\"]*['\"]\s*\)?\s*%\s*[\w\{\(\[]",
+        re.DOTALL,
+    )
+
+    def search(self, code: str) -> bool:
+        try:
+            tree = ast.parse(textwrap.dedent(code))
+        except SyntaxError:
+            return bool(self._FALLBACK.search(code))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and self._is_exec_call(node):
+                if node.args and self._literal_text(node.args[0]) is None and self._is_dynamic(node.args[0]):
+                    return True
+            elif self._is_dynamic(node) and self._SQL.search(self._template_text(node)):
+                return True
+        return False
+
+    def _is_exec_call(self, node: ast.Call) -> bool:
+        return isinstance(node.func, ast.Attribute) and node.func.attr in self._EXEC_METHODS
+
+    def _is_dynamic(self, node: ast.AST) -> bool:
+        if isinstance(node, ast.JoinedStr):
+            return any(isinstance(v, ast.FormattedValue) for v in node.values)
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mod):
+            return self._literal_text(node.left) is not None
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            left, right = self._literal_text(node.left), self._literal_text(node.right)
+            has_literal = left is not None or right is not None or self._is_dynamic(node.left)
+            has_runtime = left is None or right is None
+            return has_literal and has_runtime
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "format"):
+            return self._literal_text(node.func.value) is not None
+        return False
+
+    def _literal_text(self, node: ast.AST) -> str | None:
+        """Text of a string literal, including implicit/explicit literal concatenation."""
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return node.value
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            left, right = self._literal_text(node.left), self._literal_text(node.right)
+            if left is not None and right is not None:
+                return left + right
+        return None
+
+    def _template_text(self, node: ast.AST) -> str:
+        """The literal parts of a dynamic string, used to check for SQL keywords."""
+        parts = []
+        for sub in ast.walk(node):
+            if isinstance(sub, ast.Constant) and isinstance(sub.value, str):
+                parts.append(sub.value)
+        return " ".join(parts)
 
 # ---------------------------------------------------------------------------
 # Python sources — functions that introduce untrusted / attacker-controlled data
@@ -55,28 +132,10 @@ _PYTHON_SINKS: list[tuple[re.Pattern, str, str]] = [
         "Command Injection",
     ),
 
-    # SQL Injection — %-formatted or f-string query strings interpolated directly
-    # into cursor.execute().  Heuristic: false positives acceptable (noted limitation).
-    (
-        re.compile(r"\.execute\s*\(\s*[\"\']*.*%s|\.execute\s*\(\s*f['\"]"),
-        "sql_execute",
-        "SQL Injection",
-    ),
-    # SQL Injection — Python % string-formatting operator applied to a SQL string.
-    # Pattern: closing quote followed by `% {dict}` or `% (tuple)` or `% var`.
-    # Detects e.g. `"INSERT INTO t VALUES ('%s')" % user_input`.
-    # Uses re.DOTALL so the SQL keyword and the `%` operator can span multiple lines
-    # in a parenthesised multi-line string expression.
-    # NOTE: the pattern requires a SQL keyword to reduce false positives;
-    # pure Python string formatting unrelated to SQL will not match.
-    (
-        re.compile(
-            r"(INSERT|SELECT|UPDATE|DELETE).*['\"]\s*%\s*[\w\{\(\[]",
-            re.DOTALL,
-        ),
-        "sql_percent_format",
-        "SQL Injection",
-    ),
+    # SQL Injection — query text assembled from runtime values (%-operator,
+    # f-string, .format(), concatenation).  AST-based so that parameterised
+    # queries — execute("... WHERE id = %s", (id,)) — are NOT flagged.
+    (_PythonSqlInjectionSink(), "sql_dynamic_query", "SQL Injection"),
 
     # Insecure Deserialization — pickle.loads on untrusted bytes executes arbitrary code
     (re.compile(r"pickle\.loads\s*\("), "pickle_loads", "Insecure Deserialization"),
