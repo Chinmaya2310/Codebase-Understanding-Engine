@@ -17,7 +17,7 @@
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.3-ee4c2c?style=flat-square&logo=pytorch&logoColor=white)](https://pytorch.org)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15+pgvector-336791?style=flat-square&logo=postgresql&logoColor=white)](https://postgresql.org)
 [![License](https://img.shields.io/badge/License-MIT-22d399?style=flat-square)](LICENSE)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-6c63ff?style=flat-square)](CONTRIBUTING.md)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-6c63ff?style=flat-square)](#-contributing)
 
 <br/>
 
@@ -25,10 +25,9 @@
 
 <br/>
 
-[🚀 Live Demo](https://cue-v2.vercel.app) &nbsp;&nbsp;·&nbsp;&nbsp;
-[📖 API Docs](https://cue-backend.onrender.com/docs) &nbsp;&nbsp;·&nbsp;&nbsp;
-[🐛 Report Bug](https://github.com/yourusername/cue-v2/issues) &nbsp;&nbsp;·&nbsp;&nbsp;
-[💡 Request Feature](https://github.com/yourusername/cue-v2/issues)
+[🚀 Quick Start](#-quick-start) &nbsp;&nbsp;·&nbsp;&nbsp;
+[🐛 Report Bug](https://github.com/Chinmaya2310/Codebase-Understanding-Engine/issues) &nbsp;&nbsp;·&nbsp;&nbsp;
+[💡 Request Feature](https://github.com/Chinmaya2310/Codebase-Understanding-Engine/issues)
 
 <br/>
 
@@ -206,7 +205,10 @@ Every code element (function, class, method) is converted to a 384-dimensional v
 
 These vectors are stored in PostgreSQL using the **pgvector** extension. When a user asks a question, the question is embedded the same way and pgvector finds the 8 most semantically similar code elements using cosine distance (`<=>` operator) — this is the **retrieval** step of RAG.
 
-### Graph Neural Network — CodeGNN (PyTorch)
+### Graph Neural Network — CodeGNN (PyTorch, experimental)
+
+> **Status: experimental — not yet wired into the analysis pipeline.** The model and training loop
+> exist in `backend/ml/gnn/`, but the pipeline currently uses the raw sentence-transformer embeddings.
 
 CUE includes a custom 2-layer **Graph Convolutional Network** built from scratch in PyTorch (no torch-geometric dependency). It refines text embeddings by incorporating graph structure:
 
@@ -257,19 +259,19 @@ The LLM is instructed to answer using **only** the retrieved code context, preve
 │  Routes → Services → Background Pipeline              │
 │     │                      │                          │
 │  Pydantic v2            8 steps:                      │
-│  JWT auth               clone→parse→graph             │
-│  Rate limiting          →embed→persist→analyze        │
+│  JWT scaffold           clone→parse→graph             │
+│  In-memory rate limit   →embed→persist→analyze        │
 │                                                       │
 │  ML Layer:                                            │
 │  ┌─────────────────┐  ┌─────────────────────┐        │
 │  │ sentence-trans  │  │  CodeGNN (PyTorch)  │        │
-│  │ 384-dim embeds  │  │  2-layer GCN        │        │
+│  │ 384-dim embeds  │  │  experimental       │        │
 │  └─────────────────┘  └─────────────────────┘        │
 └───────────────────────┬───────────────────────────────┘
-         ┌─────────────┼──────────────┐
-         ▼             ▼              ▼
-   PostgreSQL 15   pgvector        Redis 7
-   (5 tables)     (cosine search)  (rate limits)
+              ┌────────┴────────┐
+              ▼                 ▼
+        PostgreSQL 15        pgvector
+        (5 tables)        (cosine search)
 ```
 
 ---
@@ -284,7 +286,7 @@ The LLM is instructed to answer using **only** the retrieved code context, preve
 | SQLAlchemy | 2.0+ | Async ORM |
 | asyncpg | 0.29+ | PostgreSQL async driver |
 | pgvector | 0.2.5+ | Vector similarity in PostgreSQL |
-| PyTorch | 2.3+ | GCN model (CodeGNN) |
+| PyTorch | 2.3+ | GCN model (CodeGNN, experimental) |
 | sentence-transformers | 3.0+ | Code element embeddings |
 | tree-sitter | 0.22+ | AST parsing (all languages) |
 | NetworkX | 3.3+ | Graph construction & algorithms |
@@ -308,7 +310,6 @@ The LLM is instructed to answer using **only** the retrieved code context, preve
 |-----------|------|
 | PostgreSQL 15 | Primary database |
 | pgvector extension | 384-dim cosine similarity search |
-| Redis 7 | Rate limiting |
 | Docker | Local development containers |
 | Nginx | Production reverse proxy + SSL |
 
@@ -333,7 +334,7 @@ cue2/
 │   │
 │   ├── core/
 │   │   ├── config.py             ← Settings (pydantic-settings + .env)
-│   │   └── security.py           ← JWT auth + in-memory rate limiter
+│   │   └── security.py           ← JWT scaffold + in-memory rate limiter
 │   │
 │   ├── db/
 │   │   └── database.py           ← Async engine (pool=5, Windows-safe)
@@ -363,7 +364,7 @@ cue2/
 │   │   └── diagram_service.py    ← Mermaid + D3 + arch detection
 │   │
 │   ├── ml/
-│   │   ├── gnn/
+│   │   ├── gnn/                  ← experimental, not called by the pipeline
 │   │   │   ├── layers.py         ← GCNLayer (D⁻¹/²(A+I)D⁻¹/²HW)
 │   │   │   ├── model.py          ← CodeGNN (384→256→128)
 │   │   │   ├── dataset.py        ← Graph → tensors converter
@@ -391,10 +392,8 @@ cue2/
 │   └── vite.config.ts
 │
 └── tests/
-    ├── test_parsers.py           ← 12 tests (all 4 parsers)
-    ├── test_graph.py             ← 17 tests (graph + dead code)
-    ├── test_dead_code.py         ← 6 end-to-end tests
-    └── test_question_answering.py← 4 mocked Q&A tests
+    ├── test_taint_analysis.py                ← 19 tests (taint sources, sinks, interprocedural flows)
+    └── test_call_resolution_and_sql_sink.py  ← 15 tests (receiver-aware call resolution, AST SQL sinks)
 ```
 
 ---
@@ -411,11 +410,11 @@ cue2/
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/yourusername/cue-v2.git
-cd cue-v2
+git clone https://github.com/Chinmaya2310/Codebase-Understanding-Engine.git
+cd Codebase-Understanding-Engine
 ```
 
-### 2. Start databases with Docker
+### 2. Start the database with Docker
 
 ```bash
 # PostgreSQL with pgvector
@@ -425,11 +424,6 @@ docker run -d --name cue-postgres \
   -e POSTGRES_PASSWORD=postgres \
   -p 5433:5432 \
   pgvector/pgvector:0.7.0-pg15
-
-# Redis
-docker run -d --name cue-redis \
-  -p 6379:6379 \
-  redis:7-alpine
 ```
 
 ### 3. Configure environment
@@ -442,7 +436,6 @@ Edit `.env`:
 ```dotenv
 DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5433/codebase_engine
 DATABASE_URL_SYNC=postgresql://postgres:postgres@localhost:5433/codebase_engine
-REDIS_URL=redis://localhost:6379/0
 SECRET_KEY=your-secret-key-here  # python -c "import secrets; print(secrets.token_hex(32))"
 OPENAI_API_KEY=sk-...            # optional — needed for Ask AI
 CLONE_BASE_PATH=C:/tmp/cue_repos  # Windows: use forward slashes
@@ -486,20 +479,14 @@ Paste any public GitHub URL and click **Analyze** 🎉
 
 ## 🌐 Deployment
 
-### Free Deployment (No cost)
+There is no public deployment yet — CUE currently runs locally (see Quick Start).
+A free-tier setup that fits the stack:
 
 | Service | Hosts | Free limit |
 |---------|-------|-----------|
 | **Vercel** | React frontend | Unlimited |
 | **Render.com** | FastAPI backend | 512 MB RAM |
 | **Neon.tech** | PostgreSQL + pgvector | 512 MB storage |
-| **Upstash** | Redis | 10,000 cmds/day |
-
-See the [Free Hosting Guide](docs/FREE_HOSTING.md) for step-by-step instructions.
-
-### Production Deployment (VPS)
-
-See the [Server Hosting Guide](docs/SERVER_HOSTING.md) for full Nginx + systemd + SSL setup on DigitalOcean / Hetzner.
 
 ---
 
@@ -573,14 +560,12 @@ Response:
 ## 🧪 Testing
 
 ```bash
-# Run all 46 tests
+# Run all 34 tests
 python -m pytest -v
 
 # Run specific test files
-python -m pytest tests/test_parsers.py -v      # AST parser tests
-python -m pytest tests/test_graph.py -v        # Graph + dead code tests
-python -m pytest tests/test_dead_code.py -v    # End-to-end dead code
-python -m pytest tests/test_question_answering.py -v  # Q&A (mocked)
+python -m pytest tests/test_taint_analysis.py -v                # Taint analysis
+python -m pytest tests/test_call_resolution_and_sql_sink.py -v  # Call resolution + SQL sinks
 
 # Run with coverage
 pip install pytest-cov
@@ -589,15 +574,14 @@ python -m pytest --cov=backend --cov-report=term-missing
 
 **Test results:**
 ```
-tests/test_parsers.py          ........ 12 passed
-tests/test_graph.py            ................ 17 passed
-tests/test_dead_code.py        ...... 6 passed
-tests/test_question_answering.py .... 4 passed
+tests/test_taint_analysis.py               ................... 19 passed
+tests/test_call_resolution_and_sql_sink.py ............... 15 passed
 ─────────────────────────────────────────────────
-46 passed in 18.70s
+34 passed in 0.62s
 ```
 
-No external services required — tests use mocked LLM calls and in-memory graphs.
+No external services required — tests run on in-memory graphs, with no database or LLM.
+Test coverage currently focuses on the security analysis; the parsers, dead-code detection and Q&A are not yet covered by automated tests.
 
 ---
 
@@ -782,8 +766,9 @@ The **Security** tab in the UI shows all findings with confidence filters, vulne
 | **Public repos only** | No GitHub OAuth — private repos require token in URL |
 | **Name-based call resolution** | CALLS edges matched by function name, not type analysis — ~80% accurate |
 | **Repo size limit** | Default 500 MB — configurable via `MAX_REPO_SIZE_MB` |
-| **Render free tier sleeps** | 30-60s cold start after 15 min idle — use UptimeRobot to keep awake |
 | **Rust/C not yet supported** | Parsers not yet implemented |
+| **Auth is a scaffold** | JWTs are signature-checked, but there are no user accounts: `/api/auth/token` issues a token for any credentials, and with `DEBUG=true` requests without a token are allowed as `anonymous` |
+| **Rate limiting is in-memory** | Per-IP counter that resets on restart; not shared across multiple instances |
 | **Taint analysis is call-graph level** | Not data-flow sensitive — false positives expected (see Security Analysis section above) |
 
 ---
@@ -794,7 +779,6 @@ The **Security** tab in the UI shows all findings with confidence filters, vulne
 |---------|---------|---------|-------------|
 | `DATABASE_URL` | ✅ | — | PostgreSQL async connection string |
 | `DATABASE_URL_SYNC` | ✅ | — | PostgreSQL sync connection string |
-| `REDIS_URL` | ✅ | — | Redis connection string |
 | `SECRET_KEY` | ✅ | — | JWT signing secret (32 random bytes) |
 | `OPENAI_API_KEY` | ❌ | — | Enables Ask AI + Explain via GPT-4o-mini |
 | `GROQ_API_KEY` | ❌ | — | Enables Ask AI + Explain via Groq (qwen3.8-27b, free tier) |
@@ -833,6 +817,6 @@ This project is licensed under the **MIT License** — see the [LICENSE](LICENSE
 
 ⭐ **Star this repo** if it helped you understand a codebase faster!
 
-[Report Bug](https://github.com/yourusername/cue-v2/issues) · [Request Feature](https://github.com/yourusername/cue-v2/issues) · [Buy me a coffee](https://buymeacoffee.com)
+[Report Bug](https://github.com/Chinmaya2310/Codebase-Understanding-Engine/issues) · [Request Feature](https://github.com/Chinmaya2310/Codebase-Understanding-Engine/issues)
 
 </div>

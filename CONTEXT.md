@@ -34,7 +34,7 @@ Core capabilities surfaced to users:
 | LLM | OpenAI GPT-4o-mini (if OPENAI_API_KEY) or Groq qwen3.8-27b (if GROQ_API_KEY) or distilgpt2 local fallback |
 | GNN (experimental) | 2-layer PyTorch GCN (CodeGNN) — defined but not yet wired into the pipeline |
 | Frontend | React 18 + TypeScript + Vite + axios + D3.js + Mermaid.js |
-| Auth | JWT (python-jose) — a dev no-op: any call with no token still passes via the `get_current_user` dependency |
+| Auth | JWT (python-jose) scaffold — tokens are signature-checked, but `/api/auth/token` issues one for any credentials, and with `DEBUG=true` a request with no token passes as `anonymous` |
 | Rate limiting | In-memory counter per user — not Redis-backed |
 
 ---
@@ -106,6 +106,7 @@ frontend/src/
 
 tests/
   test_taint_analysis.py     ← 19 unit tests for taint detection (no DB needed)
+  test_call_resolution_and_sql_sink.py ← 15 tests for receiver-aware call resolution + AST SQL sinks
 ```
 
 ---
@@ -568,5 +569,5 @@ npm run dev
 | GNN not wired in | CodeGNN is defined and tested but not called from the pipeline |
 | Redis not used | REDIS_URL is configured but nothing currently uses Redis |
 | Rate limiting is in-memory | Resets on server restart; not suitable for multi-instance deploy |
-| No real auth | JWT verification passes with any token for dev convenience |
+| No real auth | No user accounts: any credentials get a token, and with `DEBUG=true` requests without a token pass as `anonymous` (invalid tokens are still rejected) |
 | No incremental analysis | Reanalyze always reclones and reprocesses from scratch |
