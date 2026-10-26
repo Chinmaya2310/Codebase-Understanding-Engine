@@ -216,7 +216,9 @@ Step 3 — BUILD GRAPH (progress 0.45)
   → creates NetworkX MultiDiGraph
   → nodes: all elements except "call" and "import" pseudo-elements
   → CONTAINS edges: parent_qualified_name → child qualified_name (structural)
-  → CALLS edges: resolved by matching callee name to known qualified_names (~80% accuracy)
+  → CALLS edges: Python callees keep their receiver and are resolved by _PythonCallIndex
+    (Klass.m(), self.m(), module.f(), bare f()); unknown receivers create no edge.
+    JS/Java/Go callees are matched by bare name to known qualified_names
   → IMPORTS edges: module → target module (external deps get an "external::<name>" node)
 
 Step 4 — EMBED (progress 0.55–0.65)
@@ -242,6 +244,7 @@ Step 6 — ANALYZE (progress 0.85)
 
   DeadCodeService.find_dead_code():
     → finds function/method/class nodes with zero incoming calls/imports/inherits/implements edges
+    (note: build_graph only creates contains/calls/imports edges today)
     → skips: __dunder__, test_*, main, setup, teardown, handle*, on_* (entry-point patterns)
     → marks matched CodeElement rows as is_dead_code=True in the DB
 
@@ -249,7 +252,8 @@ Step 6 — ANALYZE (progress 0.85)
 
 Step 7 — TAINT ANALYSIS (inside own try/except)
   TaintAnalysisService.run(graph, language="python"):
-    → pattern matching phase: regex each function's source_code against SOURCES and SINKS
+    → pattern matching phase: match each function's source_code against SOURCES and SINKS
+      (regex, except the SQL sink, which is an AST check for dynamically built SQL)
     → direct findings: source_function == sink_function (both patterns in same body)
     → interprocedural: BFS over CALLS edges from each source node, max_depth=6
       - finds sink nodes reachable via CALLS edges
@@ -440,19 +444,21 @@ JSON blobs in `analysis_results`. Graph nodes/edges are also written to `graph_n
 tables, but these are not queried for analysis — they exist for potential future use (the API
 doesn't currently expose graph traversal queries).
 
-**Name-based call resolution (not type-aware)**
+**Receiver-aware call resolution (not type-aware)**
 A full type-inference call graph would require either a full language server per language or a
-much more complex multi-pass analysis. The current approach (match callee name → all known qualified
-names with that name) works well enough for most codebases but produces false edges for common
-names like `get`, `create`, `update`.
+much more complex multi-pass analysis. For Python, the parser keeps each call's receiver and the
+graph resolves `Klass.m()`, `self.m()`, `module.f()` and bare `f()`; calls on receivers of unknown
+type create no edge, trading recall for precision. On DVPWA this cut taint findings from 8 to 1
+(precision 12.5% → 100%). JS/Java/Go still match by bare name, which produces false edges for
+common names like `get`, `create`, `update`.
 
-**Regex-based taint sources/sinks (not AST-level)**
-The taint engine runs regex against the raw `source_code` string stored for each function body.
-This is much simpler than AST-level data flow, but means:
+**Mostly regex-based taint sources/sinks**
+The taint engine runs regex against the raw `source_code` string stored for each function body,
+except for SQL injection, which parses the body and flags SQL built with `%`, f-strings,
+`.format()` or `+` (parameterised `execute(q, params)` is not flagged). This means:
 - Can't distinguish `request.args` in a comment from a real call
 - Can't track data through assignments across function boundaries
-- The cross-line SQL injection pattern (`sql_percent_format`) requires `re.DOTALL` and a SQL keyword
-  to reduce false positives
+- The SQL check needs the SQL text and the dynamic building in the same function
 
 **Chunked DB writes throughout the pipeline**
 The original code was written to support Windows (WinError 10055 = socket buffer exhaustion).
@@ -561,9 +567,9 @@ npm run dev
 
 | Issue | Detail |
 |---|---|
-| Call resolution is name-only | ~80% accuracy; common names produce false CALLS edges |
+| Call resolution is not type-aware | Python is receiver-aware (unknown receivers → no edge); JS/Java/Go are name-only, so common names produce false CALLS edges |
 | Taint is call-graph level | Not data-flow sensitive — false positives expected |
-| SQL injection regex is heuristic | Requires a SQL keyword in the same expression |
+| SQL injection check is heuristic | SQL text and dynamic building must be in the same function |
 | No sanitiser modelling in taint | A validator between source and sink is ignored |
 | Taint analysis is Python-only | JS/Java/Go patterns not yet defined |
 | GNN not wired in | CodeGNN is defined and tested but not called from the pipeline |

@@ -133,7 +133,8 @@ CUE ingests any public GitHub repository and transforms it into an interactive k
 | **🔍 Code Graph** | Interactive force-directed visualization of every function, class and module — drag nodes, zoom in, click to inspect |
 | **🏗️ Architecture** | Auto-generated Mermaid.js diagrams revealing MVC, Layered, or Microservices patterns |
 | **🛡️ Dead Code** | Functions and classes with zero detected callers, ranked by confidence |
-| **📁 Code Explorer** | Searchable, filterable browser of all 50,000+ parsed elements with pagination |
+| **🔐 Security** | Taint-flow findings from user-input sources to dangerous sinks, with call paths and an on-demand LLM explanation |
+| **📁 Code Explorer** | Searchable, filterable, paginated browser of every parsed element |
 | **💬 Ask AI** | Natural-language Q&A grounded in the actual code — "Where is auth?" gets you exact file:line answers |
 
 ---
@@ -158,7 +159,9 @@ GitHub URL
     ▼  NetworkX MultiDiGraph
 ┌─────────────────┐
 │  Graph Builder  │  Nodes: code elements
-│  (NetworkX)     │  Edges: CONTAINS · CALLS · IMPORTS · INHERITS · IMPLEMENTS
+│  (NetworkX)     │  Edges: CONTAINS · CALLS · IMPORTS
+│                 │  Python calls resolved by receiver (Klass.m, self.m, module.f);
+│                 │  JS/Java/Go calls matched by name
 └────────┬────────┘
          │
     ▼  all-MiniLM-L6-v2 · batch=16 · chunks of 50
@@ -168,22 +171,27 @@ GitHub URL
 │   transformers) │
 └────────┬────────┘
          │
-    ▼  Parallel analyses
-┌────────┴──────────────────────────────────┐
-│                                           │
-▼                   ▼                       ▼
-Architecture    Dead Code              Diagrams
-Detection       Detection              Generation
-(directory      (graph reachability    (Mermaid.js +
- signals)        + entrypoint filter)   D3.js JSON)
-│                   │                       │
-└────────┬──────────┘                       │
-         │                                  │
-         ▼  PostgreSQL JSONB                │
-    AnalysisResult rows ◄────────────────────┘
+    ▼  graph_nodes / graph_edges tables
+┌─────────────────┐
+│  Persist graph  │
+└────────┬────────┘
          │
-         ▼
-    status = READY ✅
+    ▼  Analyses (run one after another)
+┌─────────────────┐
+│  Architecture   │  Directory-name signals → layered / MVC / microservices
+│  Diagrams       │  Mermaid.js dependency + architecture diagrams, D3.js graph JSON
+│  Dead code      │  Zero incoming CALLS/IMPORTS edges, entry-point names skipped
+└────────┬────────┘
+         │
+    ▼  isolated: a failure here does not fail the run
+┌─────────────────┐
+│  Taint analysis │  Python sources → sinks, BFS over CALLS edges (≤ 6 hops)
+└────────┬────────┘
+         │
+         ▼  PostgreSQL JSONB
+    AnalysisResult rows → status = READY ✅
+
+All 7 steps run in one FastAPI background task; the UI polls status/progress every 3 s.
 ```
 
 ---
@@ -233,10 +241,12 @@ After training (self-supervised, contrastive link-prediction — no labels neede
 ### RAG Q&A — Retrieval-Augmented Generation
 
 ```
-Question → embed → pgvector top-8 → LLM context → GPT-4o-mini → answer + citations
+Question → embed → pgvector top-8 → LLM context → LLM → answer + citations
 ```
 
-The LLM is instructed to answer using **only** the retrieved code context, preventing hallucination. Every answer includes source citations (file path + qualified name + element type).
+LLM selection: OpenAI (`gpt-4o-mini`) if `OPENAI_API_KEY` is set, otherwise Groq if `GROQ_API_KEY` is set, otherwise a local `distilgpt2` fallback.
+
+The LLM is instructed to answer using **only** the retrieved code context, to reduce hallucination. Every answer includes source citations (file path + qualified name + element type).
 
 ---
 
@@ -247,20 +257,20 @@ The LLM is instructed to answer using **only** the retrieved code context, preve
 │                                                       │
 │   React 18 + TypeScript + Vite 5                      │
 │   ┌──────────┐ ┌──────────┐ ┌──────────┐             │
-│   │Dashboard │ │ CodeGraph│ │  Ask AI  │  ...5 tabs  │
+│   │Dashboard │ │ CodeGraph│ │  Ask AI  │  ...6 tabs  │
 │   │(repos)   │ │ (D3.js)  │ │  (chat)  │             │
 │   └──────────┘ └──────────┘ └──────────┘             │
 │          Axios HTTP client → /api/*                   │
 └───────────────────────┬───────────────────────────────┘
-                        │ Vite proxy (dev) / Nginx (prod)
+                        │ Vite dev proxy
 ┌───────────────────────▼───────────────────────────────┐
 │                  FastAPI :8080                         │
 │                                                       │
 │  Routes → Services → Background Pipeline              │
 │     │                      │                          │
-│  Pydantic v2            8 steps:                      │
-│  JWT scaffold           clone→parse→graph             │
-│  In-memory rate limit   →embed→persist→analyze        │
+│  Pydantic v2            7 steps:                      │
+│  JWT scaffold           clone→parse→graph→embed       │
+│  In-memory rate limit   →persist→analyze→taint        │
 │                                                       │
 │  ML Layer:                                            │
 │  ┌─────────────────┐  ┌─────────────────────┐        │
@@ -290,7 +300,7 @@ The LLM is instructed to answer using **only** the retrieved code context, preve
 | sentence-transformers | 3.0+ | Code element embeddings |
 | tree-sitter | 0.22+ | AST parsing (all languages) |
 | NetworkX | 3.3+ | Graph construction & algorithms |
-| OpenAI | 1.30+ | GPT-4o-mini for Q&A |
+| OpenAI / Groq | 1.30+ / 0.9+ | LLM for Q&A and finding explanations (local distilgpt2 fallback) |
 | Pydantic | 2.7+ | Validation & settings |
 
 ### Frontend
@@ -311,7 +321,6 @@ The LLM is instructed to answer using **only** the retrieved code context, preve
 | PostgreSQL 15 | Primary database |
 | pgvector extension | 384-dim cosine similarity search |
 | Docker | Local development containers |
-| Nginx | Production reverse proxy + SSL |
 
 ---
 
@@ -360,7 +369,7 @@ cue2/
 │   │   ├── embedding_service.py  ← sentence-transformers (batch=16)
 │   │   ├── llm_service.py        ← OpenAI + fallback + retry
 │   │   ├── question_answering_service.py ← RAG pipeline
-│   │   ├── dead_code_service.py  ← Graph reachability analysis
+│   │   ├── dead_code_service.py  ← Zero-incoming-reference detection
 │   │   └── diagram_service.py    ← Mermaid + D3 + arch detection
 │   │
 │   ├── ml/
@@ -690,7 +699,7 @@ CUE includes a **call-graph-level taint analysis** engine that traces paths from
 ### How it works
 
 1. After the call graph is built, the pipeline runs `TaintAnalysisService.run()`.
-2. It regex-matches every function's source code against a list of **source patterns** (HTTP request params, `input()`, `sys.argv`, env vars, cookies) and **sink patterns** (eval/exec, `os.system`, `subprocess` with `shell=True`, raw SQL via `%`-formatting or f-strings, `pickle.loads`, `yaml.load`, Jinja2 `render_template_string`).
+2. It matches every function's source code against **source patterns** (HTTP request params, `input()`, `sys.argv`, env vars, cookies) and **sink patterns** (eval/exec, `os.system`, `subprocess` with `shell=True`, `pickle.loads`, `yaml.load`, Jinja2 `render_template_string`) using regex. SQL injection is detected with an **AST check**: SQL built with `%`, f-strings, `.format()` or `+` is flagged, while parameterised `execute(q, params)` calls are not.
 3. BFS over CALLS edges from each source function, up to 6 hops deep, finds reachable sinks.
 4. Confidence: **high** if source calls sink directly (≤1 hop), **medium** for 2–3 hops, **low** for 4–6 hops.
 5. Deduplication keeps the highest-confidence path per `(source, sink)` pair.
@@ -707,13 +716,21 @@ Source: sqli/views.py:52  (views.students)
   await Student.create(conn, data['name'])
 
 Sink:   sqli/dao/student.py:41  (student.Student.create)
-  q = "INSERT INTO student(name) VALUES ('%s')" % name   ← sql_percent_format
-  await conn.execute(q)              ← unparameterized SQL
+  q = ("INSERT INTO students (name) "
+       "VALUES ('%(name)s')" % {'name': name})   ← SQL built with %
+  await cur.execute(q)               ← unparameterised SQL
 ```
 
 This is the documented CVE-class vulnerability in DVPWA: a POST to `/students` with a crafted `name` value achieves SQL injection because the INSERT query is built via Python `%` string formatting before being passed to `execute()`.
 
-The full API run against DVPWA returns **8 findings** (all SQL Injection, all high confidence), covering `Student.create`, `Student.get`, and `Course.create` sink functions reachable from every HTTP handler.
+**Precision on DVPWA — before and after the call-resolution fix:**
+
+| | Findings | True positives | Precision |
+|---|---|---|---|
+| Name-based call resolution + regex SQL sink | 8 | 1 | 12.5% |
+| Receiver-aware call resolution + AST SQL sink | **1** | **1** | **100%** |
+
+The 7 false positives had two causes: calls were matched by method name only, so `Course.create(...)` was linked to `Student.create`; and the SQL regex flagged parameterised queries such as `Student.get`. Both cases are covered by regression tests in `tests/test_call_resolution_and_sql_sink.py`.
 
 ### Limitations
 
@@ -721,8 +738,8 @@ The full API run against DVPWA returns **8 findings** (all SQL Injection, all hi
 |---|---|
 | **Python-only** | JS/Java/Go patterns not yet implemented — additive to add (new key in `SOURCES`/`SINKS` dicts) |
 | **Call-graph level** | Does NOT track data flow through variables — a tainted value may not actually reach the sink at runtime |
-| **Regex-based** | Source/sink detection uses regex on raw source code, not an AST — false positives possible |
-| **SQL injection heuristic** | `sql_percent_format` pattern requires a SQL keyword in the same expression — may miss cross-function composition |
+| **Mostly regex-based** | Sources and non-SQL sinks are regex matches on raw source code — false positives possible |
+| **SQL injection heuristic** | The AST check needs the SQL text and the dynamic string building in the same function — may miss queries composed across functions |
 | **No sanitiser modelling** | If tainted data passes through a sanitiser/validator between source and sink, the finding is still reported |
 
 ### API endpoints
@@ -742,7 +759,7 @@ The LLM explanation backend uses **Groq (qwen/qwen3.8-27b)** by default via `GRO
 
 ![Security tab showing 8 SQL Injection findings for DVPWA with AI explanation expanded](docs/security-tab-screenshot.png)
 
-*8 findings for DVPWA — `views.students → Student.create` expanded with Groq-powered AI Security Analysis.*
+*Captured before the precision fix, when DVPWA showed 8 findings (7 false positives); the current version reports only the `views.students → Student.create` injection shown expanded here.*
 
 ### Running taint analysis
 
@@ -764,7 +781,7 @@ The **Security** tab in the UI shows all findings with confidence filters, vulne
 | Limitation | Details |
 |-----------|---------|
 | **Public repos only** | No GitHub OAuth — private repos require token in URL |
-| **Name-based call resolution** | CALLS edges matched by function name, not type analysis — ~80% accurate |
+| **Call resolution is not type-aware** | Python resolves calls by receiver (`Klass.m`, `self.m`, `module.f`), and calls on receivers of unknown type create no edge (possible missed edges); JS/Java/Go still match by name, so common names can create false edges |
 | **Repo size limit** | Default 500 MB — configurable via `MAX_REPO_SIZE_MB` |
 | **Rust/C not yet supported** | Parsers not yet implemented |
 | **Auth is a scaffold** | JWTs are signature-checked, but there are no user accounts: `/api/auth/token` issues a token for any credentials, and with `DEBUG=true` requests without a token are allowed as `anonymous` |
@@ -780,7 +797,7 @@ The **Security** tab in the UI shows all findings with confidence filters, vulne
 | `DATABASE_URL` | ✅ | — | PostgreSQL async connection string |
 | `DATABASE_URL_SYNC` | ✅ | — | PostgreSQL sync connection string |
 | `SECRET_KEY` | ✅ | — | JWT signing secret (32 random bytes) |
-| `OPENAI_API_KEY` | ❌ | — | Enables Ask AI + Explain via GPT-4o-mini |
+| `OPENAI_API_KEY` | ❌ | — | Enables Ask AI + Explain via GPT-4o-mini (takes priority over Groq) |
 | `GROQ_API_KEY` | ❌ | — | Enables Ask AI + Explain via Groq (qwen3.8-27b, free tier) |
 | `CLONE_BASE_PATH` | ❌ | `/tmp/cue_repos` | Where repos are cloned |
 | `MAX_REPO_SIZE_MB` | ❌ | `500` | Max repository size in MB |
